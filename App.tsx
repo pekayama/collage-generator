@@ -27,11 +27,17 @@ export default function App() {
     overlayTransform: { ...INITIAL_TRANSFORM },
   });
 
-  // State to hold loaded image elements for performance (avoids reloading on every frame)
+  // State to hold loaded image elements for performance
   const [loadedImages, setLoadedImages] = useState<{ char: HTMLImageElement | null; overlay: HTMLImageElement | null }>({
     char: null,
     overlay: null,
   });
+
+  // Dragging State
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [initialDragTransform, setInitialDragTransform] = useState({ x: 0, y: 0 });
+  const [isHoveringChar, setIsHoveringChar] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -81,7 +87,6 @@ export default function App() {
     const file = event.target.files?.[0];
     if (file) {
       handleInputChange(field, file);
-      // Reset transforms for new image
       if (field === "characterImage") setConfig(prev => ({ ...prev, characterTransform: { ...INITIAL_TRANSFORM } }));
       if (field === "overlayImage") setConfig(prev => ({ ...prev, overlayTransform: { ...INITIAL_TRANSFORM } }));
     }
@@ -108,6 +113,115 @@ export default function App() {
     }));
   };
 
+  // --- Drag and Drop Logic ---
+
+  // Convert Screen Coordinates to Canvas Coordinates (900x1200)
+  const getCanvasCoordinates = (clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY
+    };
+  };
+
+  const isPointInCharacter = (x: number, y: number) => {
+    if (!loadedImages.char) return false;
+
+    // Current Center of the character on canvas
+    const cx = 450 + config.characterTransform.x;
+    const cy = 600 + config.characterTransform.y;
+    
+    // Approximate hit box size based on scale
+    // We use a simplified box for better UX (easier to grab)
+    const imgW = loadedImages.char.width;
+    const imgH = loadedImages.char.height;
+    
+    // Re-calculate the base drawing size logic from drawCanvas
+    const margin = 80;
+    const maxCharWidth = 900 - (margin * 2);
+    const maxCharHeight = 1200 - (margin * 2);
+    const baseScale = Math.min(maxCharWidth / imgW, maxCharHeight / imgH);
+    
+    const displayW = imgW * baseScale * config.characterTransform.scale;
+    const displayH = imgH * baseScale * config.characterTransform.scale;
+
+    // Check if point is roughly within the bounding box centered at cx, cy
+    return (
+        x >= cx - displayW / 2 &&
+        x <= cx + displayW / 2 &&
+        y >= cy - displayH / 2 &&
+        y <= cy + displayH / 2
+    );
+  };
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!loadedImages.char) return;
+
+    let clientX, clientY;
+    if ('touches' in e) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+    } else {
+        clientX = (e as React.MouseEvent).clientX;
+        clientY = (e as React.MouseEvent).clientY;
+    }
+
+    const { x, y } = getCanvasCoordinates(clientX, clientY);
+
+    if (isPointInCharacter(x, y)) {
+        setIsDragging(true);
+        setDragStart({ x, y });
+        setInitialDragTransform({ 
+            x: config.characterTransform.x, 
+            y: config.characterTransform.y 
+        });
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    let clientX, clientY;
+    if ('touches' in e) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+    } else {
+        clientX = (e as React.MouseEvent).clientX;
+        clientY = (e as React.MouseEvent).clientY;
+    }
+
+    const { x, y } = getCanvasCoordinates(clientX, clientY);
+
+    // Update Hover State (only for mouse)
+    if (!('touches' in e) && !isDragging) {
+        setIsHoveringChar(isPointInCharacter(x, y));
+    }
+
+    // Handle Dragging
+    if (isDragging) {
+        const dx = x - dragStart.x;
+        const dy = y - dragStart.y;
+
+        setConfig(prev => ({
+            ...prev,
+            characterTransform: {
+                ...prev.characterTransform,
+                x: initialDragTransform.x + dx,
+                y: initialDragTransform.y + dy
+            }
+        }));
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+
   // Main Drawing Logic
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -116,7 +230,6 @@ export default function App() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Use synchronous drawing since images are pre-loaded
     // Canvas Settings
     canvas.width = 900;
     canvas.height = 1200;
@@ -139,41 +252,35 @@ export default function App() {
     ctx.rotate(stripAngle);
     
     ctx.fillStyle = config.bgColor2;
-    ctx.fillRect(0, -200, 1400, stripHeight); // Extended width to cover rotation
+    ctx.fillRect(0, -200, 1400, stripHeight);
 
-    // 3. Draw Overlay Pattern (if exists) inside the strip
+    // 3. Draw Overlay Pattern
     if (loadedImages.overlay) {
       const overlayImg = loadedImages.overlay;
       
-      // Clip to the strip area
       ctx.beginPath();
       ctx.rect(0, -200, 1400, stripHeight);
       ctx.clip();
 
-      // Calculate safe cover scale for height
       const coverScale = Math.max(1400 / overlayImg.width, stripHeight / overlayImg.height);
       const baseW = overlayImg.width * coverScale;
       const baseH = overlayImg.height * coverScale;
 
       ctx.save();
-      // Move to center of strip area to apply transforms
       ctx.translate(700, -50); 
       
-      // Apply User Transforms
       ctx.translate(config.overlayTransform.x, config.overlayTransform.y);
       ctx.rotate((config.overlayTransform.rotation * Math.PI) / 180);
       ctx.scale(config.overlayTransform.scale, config.overlayTransform.scale);
 
-      // Apply Effects
       ctx.filter = "grayscale(100%) opacity(0.5)";
       ctx.globalCompositeOperation = "multiply";
       
-      // Draw centered relative to transform point
       ctx.drawImage(overlayImg, -baseW / 2, -baseH / 2, baseW, baseH);
       
       ctx.restore();
     }
-    ctx.restore(); // Restore context (remove clip, rotation, filters of the strip)
+    ctx.restore();
 
     // 4. Draw Character
     if (loadedImages.char) {
@@ -183,7 +290,6 @@ export default function App() {
         const maxCharWidth = width - (margin * 2);
         const maxCharHeight = height - (margin * 2);
 
-        // Calculate aspect ratio fit (Base Scale)
         const baseScale = Math.min(
           maxCharWidth / charImg.width,
           maxCharHeight / charImg.height
@@ -196,22 +302,15 @@ export default function App() {
 
         ctx.save();
         
-        // 1. Translate to center + User Offset
         ctx.translate(cx + config.characterTransform.x, cy + config.characterTransform.y);
-        
-        // 2. User Rotate
         ctx.rotate((config.characterTransform.rotation * Math.PI) / 180);
-        
-        // 3. User Scale
         ctx.scale(config.characterTransform.scale, config.characterTransform.scale);
 
-        // Drop shadow for character
         ctx.shadowColor = "rgba(0,0,0,0.2)";
         ctx.shadowBlur = 20;
         ctx.shadowOffsetX = 5;
         ctx.shadowOffsetY = 10;
 
-        // Draw centered at (0,0) which is now the transformed center
         ctx.drawImage(charImg, -baseDrawW / 2, -baseDrawH / 2, baseDrawW, baseDrawH);
         
         ctx.restore();
@@ -249,7 +348,6 @@ export default function App() {
   }, [config, loadedImages]);
 
   // Redraw when config or loaded images change
-  // Since we pre-load images, we can redraw immediately without flickering
   useEffect(() => {
     drawCanvas();
   }, [drawCanvas]);
@@ -374,12 +472,17 @@ export default function App() {
                 </div>
 
                 {config.characterImage && (
-                    <TransformControls 
-                        values={config.characterTransform}
-                        onChange={(k, v) => handleTransformChange("character", k, v)}
-                        onReset={() => resetTransform("character")}
-                        color="pink"
-                    />
+                    <>
+                        <p className="text-xs text-center text-pink-400 font-bold mb-2 animate-pulse">
+                            👆 画像をドラッグして動かせるよ！
+                        </p>
+                        <TransformControls 
+                            values={config.characterTransform}
+                            onChange={(k, v) => handleTransformChange("character", k, v)}
+                            onReset={() => resetTransform("character")}
+                            color="pink"
+                        />
+                    </>
                 )}
               </div>
 
@@ -440,7 +543,7 @@ export default function App() {
                 </div>
                 
                 {/* Canvas Container */}
-                <div className="relative w-full aspect-[3/4] bg-gray-100 rounded-xl overflow-hidden shadow-inner border-2 border-gray-200">
+                <div className="relative w-full aspect-[3/4] bg-gray-100 rounded-xl overflow-hidden shadow-inner border-2 border-gray-200 touch-none">
                     {!config.characterImage && (
                          <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 pointer-events-none z-10">
                             <ImageIcon size={64} className="opacity-20 mb-2"/>
@@ -448,7 +551,21 @@ export default function App() {
                         </div>
                     )}
                     <canvas 
-                        ref={canvasRef} 
+                        ref={canvasRef}
+                        onMouseDown={handleMouseDown}
+                        onMouseMove={handleMouseMove}
+                        onMouseUp={handleMouseUp}
+                        onMouseLeave={handleMouseUp}
+                        onTouchStart={handleMouseDown}
+                        onTouchMove={handleMouseMove}
+                        onTouchEnd={handleMouseUp}
+                        style={{ 
+                            cursor: isDragging 
+                                ? 'grabbing' 
+                                : isHoveringChar 
+                                    ? 'grab' 
+                                    : 'default' 
+                        }}
                         className="w-full h-full object-contain bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]"
                     />
                 </div>
