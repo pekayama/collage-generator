@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Download, Upload, Image as ImageIcon, Sparkles, RefreshCcw, Move, RotateCw, ZoomIn, Sliders } from "lucide-react";
+import { Download, Upload, Image as ImageIcon, Sparkles, RefreshCcw, Move, RotateCw, ZoomIn } from "lucide-react";
 import { CollageConfig, ImageTransform } from "./types";
 
 // Helper to load images safely
@@ -34,7 +34,6 @@ export default function App() {
   });
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
 
   // Load Character Image
   useEffect(() => {
@@ -421,7 +420,6 @@ export default function App() {
 
             <button
                 onClick={downloadImage}
-                disabled={isGenerating}
                 className="mt-8 w-full py-4 bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white rounded-2xl font-black text-xl shadow-lg shadow-pink-200 transform transition hover:-translate-y-1 active:translate-y-0 flex items-center justify-center gap-3"
             >
                 <Download />
